@@ -198,6 +198,19 @@ input:disabled,select:disabled,textarea:disabled{opacity:.6}
 
 
 /* Standalone site additions */
+input[type=file]{width:100%;font-size:14px;color:var(--ink-2);background:var(--wall);border:2px dashed var(--line);border-radius:12px;padding:10px 12px}
+input[type=file]::file-selector-button{font:inherit;font-weight:600;border:2px solid var(--ink);background:var(--card);color:var(--ink);border-radius:999px;padding:4px 14px;margin-right:12px;cursor:pointer}
+input[type=file]:hover{border-color:var(--rose)}
+.file-current{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--blush);border-radius:12px;padding:8px 12px;font-size:14px;min-width:0}
+.file-current span{overflow-wrap:anywhere;min-width:0}
+.file-current.removing span{text-decoration:line-through;color:var(--ink-3)}
+.file-btn{display:inline-flex;align-items:center;gap:10px;align-self:flex-start;max-width:100%;border:2px solid var(--ink);background:var(--card);color:var(--ink);border-radius:12px;padding:7px 14px 7px 10px;cursor:pointer;font-weight:500;text-align:left}
+.file-btn:hover{background:var(--blush)}
+.file-btn:disabled{opacity:.6;cursor:progress}
+.file-btn .ext{flex:none;font-size:10.5px;font-weight:600;letter-spacing:.06em;background:var(--hot);color:var(--on-hot);border-radius:6px;padding:3px 6px;min-width:38px;text-align:center}
+.file-btn .fname{overflow-wrap:anywhere;min-width:0;font-size:14px}
+.file-btn .fsize{flex:none;font-size:12.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.file-btn .dl{flex:none;font-size:13px;font-weight:600;color:var(--hot-text)}
 input[type=email],input[type=password]{width:100%;background:var(--wall);border:2px solid var(--line);border-radius:12px;padding:8px 12px;min-height:40px;color:var(--ink)}
 .account{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:14px;font-weight:500;background:var(--card);border:2px solid var(--ink);border-radius:999px;padding:4px 14px}
 .account .linkbtn{color:var(--ink)}
@@ -361,6 +374,12 @@ input[type=email],input[type=password]{width:100%;background:var(--wall);border:
           </div>
           <div class="field"><label for="lib-topics">Topics <span class="opt">comma separated</span></label><input type="text" id="lib-topics" maxlength="200" placeholder="e.g. Behavioural finance, Estate planning"></div>
           <div class="field"><label for="lib-takeaway">Key takeaway for the team</label><textarea id="lib-takeaway" maxlength="1200" placeholder="Why it is worth reading, or one idea you'd use with clients"></textarea></div>
+          <div class="field">
+            <label for="lib-file">Attach the file <span class="opt">optional · PDF, EPUB, Word, PowerPoint, Excel or image · up to 50 MB</span></label>
+            <div class="file-current" id="lib-file-current" hidden><span id="lib-file-current-name"></span><button type="button" class="linkbtn quiet small" id="lib-file-remove">Remove</button></div>
+            <input type="file" id="lib-file" accept=".pdf,.epub,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.png,.jpg,.jpeg,.webp">
+            <span class="small muted" id="lib-file-hint">Everyone on the team can download it from the library.</span>
+          </div>
           <div class="actions">
             <button class="btn primary" type="submit" id="lib-submit">Add to library</button>
             <button class="btn ghost" type="button" id="lib-cancel" hidden>Cancel</button>

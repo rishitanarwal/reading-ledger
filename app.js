@@ -12,10 +12,14 @@ const DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const fmtDay=d=>d.getDate()+" "+MON[d.getMonth()];
 function isoWeek(d){const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=t.getUTCDay()||7;t.setUTCDate(t.getUTCDate()+4-day);const y0=new Date(Date.UTC(t.getUTCFullYear(),0,1));return Math.ceil(((t-y0)/864e5+1)/7);}
 const KINDS=["Book","Article","Report","Podcast","Video"];
-const LIB_SELECT="id,title,author,kind,pages,link,topics,takeaway,added_by,added_at,adder:members(display_name)";
+const LIB_SELECT="id,title,author,kind,pages,link,topics,takeaway,added_by,added_at,file_path,file_name,file_size,adder:members(display_name)";
+const BUCKET="sources", MAX_FILE=50*1024*1024;
+const fmtSize=b=>{b=Number(b)||0;return b>=1048576?(b/1048576).toFixed(b>=10485760?0:1)+" MB":Math.max(1,Math.round(b/1024))+" KB";};
+const fileExt=n=>{const m=/\.([a-z0-9]{1,5})$/i.exec(n||"");return m?m[1].toUpperCase():"FILE";};
+const safeName=n=>String(n||"file").normalize("NFKD").replace(/[^\w.\-]+/g,"_").replace(/_+/g,"_").slice(-120)||"file";
 
 const S={sb:null,uid:null,me:null,library:[],libLoaded:false,sessions:[],settings:{weekly_goal:500},shelf:{},
-  filter:{q:"",kind:"All",topic:null},editingId:null,returnToLog:false,confirmDel:null,channel:null,authMode:"signin"};
+  filter:{q:"",kind:"All",topic:null,files:false},editingId:null,removeFile:false,returnToLog:false,confirmDel:null,channel:null,authMode:"signin"};
 
 let toastT;
 function toast(msg){const t=$("toast");t.textContent=msg;t.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>{t.hidden=true;},2600);}
@@ -132,7 +136,9 @@ function renderSelect(){
 }
 function renderFilters(){
   const kinds=["All",...KINDS.filter(k=>S.library.some(i=>i.kind===k))];
-  $("kind-filters").innerHTML=kinds.length>2?kinds.map(k=>'<button type="button" class="pill" data-kind="'+esc(k)+'" aria-pressed="'+(S.filter.kind===k)+'">'+esc(k==="All"?"All types":k+"s")+'</button>').join(""):"";
+  const nFiles=S.library.filter(i=>i.file_path).length;
+  $("kind-filters").innerHTML=(kinds.length>2?kinds.map(k=>'<button type="button" class="pill" data-kind="'+esc(k)+'" aria-pressed="'+(S.filter.kind===k)+'">'+esc(k==="All"?"All types":k+"s")+'</button>').join(""):"")+
+    (nFiles?'<button type="button" class="pill" id="files-filter" aria-pressed="'+S.filter.files+'">With files <span class="num" style="opacity:.6">'+nFiles+'</span></button>':"");
   const counts={};S.library.forEach(i=>(i.topics||[]).forEach(t=>counts[t]=(counts[t]||0)+1));
   const topics=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]||a.localeCompare(b)).slice(0,14);
   $("topic-filters").innerHTML=topics.map(t=>'<button type="button" class="pill" data-topicf="'+esc(t)+'" aria-pressed="'+(S.filter.topic===t)+'">'+esc(t)+' <span class="num" style="opacity:.6">'+counts[t]+'</span></button>').join("");
@@ -144,7 +150,8 @@ function renderLibrary(){
   const list=S.library.filter(i=>{
     if(S.filter.kind!=="All"&&i.kind!==S.filter.kind) return false;
     if(S.filter.topic&&!(i.topics||[]).includes(S.filter.topic)) return false;
-    return !q||[i.title,i.author,i.takeaway,(i.topics||[]).join(" ")].join(" ").toLowerCase().includes(q);
+    if(S.filter.files&&!i.file_path) return false;
+    return !q||[i.title,i.author,i.takeaway,i.file_name,(i.topics||[]).join(" ")].join(" ").toLowerCase().includes(q);
   });
   const ul=$("lib-list");
   if(!S.libLoaded){ul.innerHTML='<li class="empty">Loading the library…</li>';return;}
@@ -158,6 +165,7 @@ function renderLibrary(){
     return '<li class="item"><div class="meta"><span class="kind">'+esc(i.kind||"Book")+'</span>'+(i.author?'<span>'+esc(i.author)+'</span>':"")+(i.pages?'<span class="num">'+esc(i.pages)+' pp</span>':"")+'</div>'+
       '<h3>'+(link?'<a href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">'+esc(i.title)+'</a>':esc(i.title))+'</h3>'+
       (i.takeaway?'<p class="takeaway" style="margin:0">'+esc(i.takeaway)+'</p>':"")+
+      (i.file_path?'<button type="button" class="file-btn" data-download="'+esc(i.id)+'" title="Download '+esc(i.file_name||"file")+'"><span class="ext">'+esc(fileExt(i.file_name))+'</span><span class="fname">'+esc(i.file_name||"Attached file")+'</span>'+(i.file_size?'<span class="fsize">'+esc(fmtSize(i.file_size))+'</span>':"")+'<span class="dl">Download</span></button>':"")+
       ((i.topics||[]).length?'<div class="topics">'+i.topics.map(t=>'<button type="button" class="topic" data-topicf="'+esc(t)+'">'+esc(t)+'</button>').join("")+'</div>':"")+
       '<div class="item-foot"><span>Added by '+esc(who)+(added?" · "+esc(fmtDay(added)+" "+added.getFullYear()):"")+'</span>'+
       '<span class="actions" style="gap:12px">'+(mineTxt?'<span class="mine">'+esc(mineTxt)+'</span>':"")+
@@ -169,8 +177,20 @@ function renderLibrary(){
 function renderAll(){renderWeek();renderHistory();renderReading();renderRecent();renderSelect();renderLibrary();}
 
 /* ---------- Library form helpers ---------- */
+function showCurrentFile(it){
+  const box=$("lib-file-current");
+  S.removeFile=false;box.classList.remove("removing");$("lib-file-remove").textContent="Remove";
+  if(it&&it.file_path){box.hidden=false;$("lib-file-current-name").textContent="Attached: "+(it.file_name||"file")+(it.file_size?" ("+fmtSize(it.file_size)+")":"");
+    $("lib-file-hint").textContent="Choose a new file to replace it.";}
+  else{box.hidden=true;$("lib-file-hint").textContent="Everyone on the team can download it from the library.";}
+}
+$("lib-file-remove").addEventListener("click",()=>{
+  S.removeFile=!S.removeFile;
+  $("lib-file-current").classList.toggle("removing",S.removeFile);
+  $("lib-file-remove").textContent=S.removeFile?"Keep it":"Remove";
+});
 function resetLibForm(){
-  S.editingId=null;
+  S.editingId=null;$("lib-file").value="";showCurrentFile(null);
   ["lib-title","lib-author","lib-pages","lib-link","lib-topics","lib-takeaway"].forEach(id=>$(id).value="");
   $("lib-kind").value="Book";$("lib-form-title").textContent="Add to the library";$("lib-submit").textContent="Add to library";
   $("lib-cancel").hidden=!S.returnToLog;$("lib-msg").textContent="";
@@ -179,6 +199,7 @@ function fillLibForm(it){
   S.editingId=it.id;
   $("lib-title").value=it.title||"";$("lib-author").value=it.author||"";$("lib-kind").value=it.kind||"Book";
   $("lib-pages").value=it.pages||"";$("lib-link").value=it.link||"";$("lib-topics").value=(it.topics||[]).join(", ");$("lib-takeaway").value=it.takeaway||"";
+  $("lib-file").value="";showCurrentFile(it);
   $("lib-form-title").textContent="Edit entry";$("lib-submit").textContent="Save changes";$("lib-cancel").hidden=false;
   $("lib-form-panel").scrollIntoView({behavior:"smooth",block:"start"});$("lib-title").focus({preventScroll:true});
 }
@@ -195,7 +216,9 @@ document.addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b||$("app").hidden) return;
   if(b.dataset.kind){S.filter.kind=b.dataset.kind;renderLibrary();}
   else if(b.dataset.topicf){S.filter.topic=S.filter.topic===b.dataset.topicf?null:b.dataset.topicf;renderLibrary();}
-  else if(b.id==="clear-filters"){S.filter={q:"",kind:"All",topic:null};$("lib-search").value="";renderLibrary();}
+  else if(b.id==="files-filter"){S.filter.files=!S.filter.files;renderLibrary();}
+  else if(b.dataset.download) downloadFile(b.dataset.download,b);
+  else if(b.id==="clear-filters"){S.filter={q:"",kind:"All",topic:null,files:false};$("lib-search").value="";renderLibrary();}
   else if(b.dataset.finish) setShelf(b.dataset.finish,"finished");
   else if(b.dataset.logthis){showTab("log");renderSelect();$("log-item").value=b.dataset.logthis;$("log-pages").focus();}
   else if(b.dataset.edit){const it=S.library.find(i=>i.id===b.dataset.edit);if(it)fillLibForm(it);}
@@ -285,28 +308,68 @@ $("lib-form").addEventListener("submit",async e=>{
   let link=$("lib-link").value.trim(); if(link&&!/^https?:\/\//i.test(link)) link="https://"+link;
   const pages=Math.round(Number($("lib-pages").value))||null;
   const body={title,author:$("lib-author").value.trim(),kind:$("lib-kind").value,pages,link,topics:parseTopics($("lib-topics").value),takeaway:$("lib-takeaway").value.trim()};
+  const file=$("lib-file").files&&$("lib-file").files[0];
+  if(file&&file.size>MAX_FILE){msg.textContent="That file is "+fmtSize(file.size)+". The limit is 50 MB, so try a compressed PDF.";return;}
+  if(file&&file.size===0){msg.textContent="That file is empty. Choose another one.";return;}
   msg.textContent="";$("lib-submit").disabled=true;
+  const btnLabel=$("lib-submit").textContent;
+  let uploadedPath=null;
+  const old=S.editingId?S.library.find(i=>i.id===S.editingId):null;
   try{
+    if(file){
+      $("lib-submit").textContent="Uploading "+fmtSize(file.size)+"…";
+      const path=S.uid+"/"+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2))+"-"+safeName(file.name);
+      const up=await S.sb.storage.from(BUCKET).upload(path,file,{contentType:file.type||"application/octet-stream",upsert:false});
+      if(up.error) throw up.error;
+      uploadedPath=path;
+      Object.assign(body,{file_path:path,file_name:file.name.slice(0,200),file_size:file.size});
+    }else if(S.editingId&&S.removeFile){
+      Object.assign(body,{file_path:null,file_name:null,file_size:null});
+    }
+    $("lib-submit").textContent="Saving…";
     if(S.editingId){
       const {error}=await S.sb.from("library").update(body).eq("id",S.editingId);
       if(error) throw error;
+      uploadedPath=null;
+      if(old&&old.file_path&&(file||S.removeFile)) S.sb.storage.from(BUCKET).remove([old.file_path]).catch(()=>{});
       toast("Saved changes");resetLibForm();await loadLibrary();
     }else{
       body.added_by=S.uid;
       const {data,error}=await S.sb.from("library").insert(body).select(LIB_SELECT).single();
       if(error) throw error;
+      uploadedPath=null;
       if(!S.library.some(i=>i.id===data.id)) S.library.unshift(data);
       renderAll();toast("Added to the library");
       const back=S.returnToLog;S.returnToLog=false;resetLibForm();
       if(back){showTab("log");renderSelect();$("log-item").value=data.id;$("log-pages").focus();}
     }
-  }catch(err){msg.textContent=errMsg(err);}
-  finally{$("lib-submit").disabled=false;}
+  }catch(err){
+    if(uploadedPath) S.sb.storage.from(BUCKET).remove([uploadedPath]).catch(()=>{});
+    const m=(err&&err.message)||"";
+    msg.textContent=/bucket not found/i.test(m)?"File uploads aren't switched on yet. Run the file-attachments script in Supabase.":
+      /exceeded|too large|payload/i.test(m)?"That file is too large. The limit is 50 MB.":errMsg(err);
+  }
+  finally{$("lib-submit").disabled=false;if(/Uploading|Saving/.test($("lib-submit").textContent))$("lib-submit").textContent=btnLabel;}
 });
 async function deleteLib(id){
+  const it=S.library.find(i=>i.id===id);
   const {error}=await S.sb.from("library").delete().eq("id",id);
   if(error){toast(errMsg(error));return;}
+  if(it&&it.file_path) S.sb.storage.from(BUCKET).remove([it.file_path]).catch(()=>{});
   S.library=S.library.filter(i=>i.id!==id);if(S.editingId===id)resetLibForm();renderAll();toast("Removed from the library");
+}
+async function downloadFile(id,btn){
+  const it=S.library.find(i=>i.id===id);
+  if(!it||!it.file_path) return;
+  const dl=btn.querySelector(".dl"), label=dl?dl.textContent:"";
+  btn.disabled=true;if(dl)dl.textContent="Preparing…";
+  try{
+    const {data,error}=await S.sb.storage.from(BUCKET).createSignedUrl(it.file_path,300,{download:it.file_name||true});
+    if(error) throw error;
+    const a=document.createElement("a");a.href=data.signedUrl;a.rel="noopener";a.download=it.file_name||"";
+    document.body.appendChild(a);a.click();a.remove();
+  }catch(err){toast(/not found/i.test((err&&err.message)||"")?"That file is no longer available.":"Couldn't download the file. Try again.");}
+  finally{btn.disabled=false;if(dl)dl.textContent=label;}
 }
 
 /* ---------- Auth ---------- */
